@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  FaultLine — Serverless Error Tracking.
+  Ingest, group, and alert on application errors using Lambda, API Gateway,
+  DynamoDB, S3, Step Functions, and SNS. Zero cost at rest.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Email address to receive error alerts (leave blank to skip)
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Architectures:
+      - arm64
+    Timeout: 10
+    MemorySize: 128
+    Environment:
+      Variables:
+        ERRORS_TABLE: !Ref ErrorGroupsTable
+        OCCURRENCES_TABLE: !Ref ErrorOccurrencesTable
+        RAW_BUCKET: !Ref RawPayloadBucket
+
+Resources:
+  # ─── API Gateway ───────────────────────────────────────────────
+  FaultLineApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+
+  # ─── Lambda Functions ─────────────────────────────────────────
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .aws-sam/build/IngestFunction
+      Handler: bootstrap
+      Description: Ingest errors — POST /errors
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref AlertRouterStateMachine
+      Events:
+        Ingest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FaultLineApi
+            Path: /errors
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorGroupsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorOccurrencesTable
+        - S3CrudPolicy:
+            BucketName: !Ref RawPayloadBucket
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt AlertRouterStateMachine.Name
+    Metadata:
+      BuildMethod: makefile
+
+  QueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .aws-sam/build/QueryFunction
+      Handler: bootstrap
+      Description: Query errors — GET /errors, GET /errors/{id}
+      Events:
+        ListErrors:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FaultLineApi
+            Path: /errors
+            Method: GET
+        GetError:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FaultLineApi
+            Path: /errors/{id}
+            Method: GET
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ErrorGroupsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ErrorOccurrencesTable
+        - S3ReadPolicy:
+            BucketName: !Ref RawPayloadBucket
+    Metadata:
+      BuildMethod: makefile
+
+  AlerterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .aws-sam/build/AlerterFunction
+      Handler: bootstrap
+      Description: Alert helper — called by Step Functions
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorGroupsTable
+    Metadata:
+      BuildMethod: makefile
+
+  # ─── Step Functions ────────────────────────────────────────────
+  AlertRouterStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/alert_router.asl.json
+      DefinitionSubstitutions:
+        AlerterFunctionArn: !GetAtt AlerterFunction.Arn
+        AlertTopicArn: !Ref AlertTopic
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AlerterFunction
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt AlertTopic.TopicName
+
+  # ─── DynamoDB Tables ──────────────────────────────────────────
+  ErrorGroupsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: GroupID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: GroupID
+          KeyType: HASH
+
+  ErrorOccurrencesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: GroupID
+          AttributeType: S
+        - AttributeName: Timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: GroupID
+          KeyType: HASH
+        - AttributeName: Timestamp
+          KeyType: RANGE
+
+  # ─── S3 — Raw Payloads ────────────────────────────────────────
+  RawPayloadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAfter30Days
+            Status: Enabled
+            ExpirationInDays: 30
+
+  # ─── S3 — Static Dashboard ────────────────────────────────────
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicRead
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${DashboardBucket.Arn}/*"
+
+  # ─── SNS — Alerts ─────────────────────────────────────────────
+  AlertTopic:
+    Type: AWS::SNS::Topic
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+Outputs:
+  ApiEndpoint:
+    Description: FaultLine API base URL
+    Value: !Sub "https://${FaultLineApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  DashboardUrl:
+    Description: Error dashboard URL
+    Value: !GetAtt DashboardBucket.WebsiteURL
+  DashboardBucket:
+    Description: S3 bucket for the dashboard (deploy with 'make deploy-frontend')
+    Value: !Ref DashboardBucket
+  AlertTopicArn:
+    Description: SNS topic for alerts — subscribe additional endpoints here
+    Value: !Ref AlertTopic

@@ -1,0 +1,72 @@
+{
+  "Comment": "FaultLine Alert Router — suppress duplicates, then notify via SNS",
+  "StartAt": "CheckSuppression",
+  "States": {
+    "CheckSuppression": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${AlerterFunctionArn}",
+        "Payload": {
+          "action": "check_suppression",
+          "group_id.$": "$.group_id",
+          "suppression_minutes": 30
+        }
+      },
+      "ResultSelector": {
+        "should_alert.$": "$.Payload.should_alert",
+        "reason.$": "$.Payload.reason"
+      },
+      "ResultPath": "$.suppression",
+      "Next": "ShouldAlert"
+    },
+
+    "ShouldAlert": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.suppression.should_alert",
+          "BooleanEquals": true,
+          "Next": "SendAlert"
+        }
+      ],
+      "Default": "AlertSuppressed"
+    },
+
+    "SendAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${AlertTopicArn}",
+        "Subject.$": "States.Format('[FaultLine] {} in {}', $.message, $.source)",
+        "Message.$": "States.Format('Error Alert\n\nGroup: {}\nSource: {}\nMessage: {}\nOccurrences: {}\nFirst seen: {}\n\nView your FaultLine dashboard for details.', $.group_id, $.source, $.message, $.count, $.first_seen)"
+      },
+      "ResultPath": "$.alert_result",
+      "Next": "UpdateNotified"
+    },
+
+    "UpdateNotified": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${AlerterFunctionArn}",
+        "Payload": {
+          "action": "update_notified",
+          "group_id.$": "$.group_id"
+        }
+      },
+      "ResultPath": "$.update_result",
+      "End": true
+    },
+
+    "AlertSuppressed": {
+      "Type": "Pass",
+      "Result": {
+        "status": "suppressed",
+        "message": "Alert suppressed — within 30-minute window"
+      },
+      "ResultPath": "$.final",
+      "End": true
+    }
+  }
+}

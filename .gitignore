@@ -1,0 +1,20 @@
+# AWS SAM / CloudFormation build & package output (contains compiled binaries & account-specific S3 URIs)
+.aws-sam/
+packaged.yaml
+samconfig.toml
+samconfig.yaml
+
+# Compiled Go binaries
+bootstrap
+faultline
+
+# Environment & credentials
+.env
+.env.*
+*.pem
+*.key
+
+# OS / Editor files
+.DS_Store
+.idea/
+.vscode/
