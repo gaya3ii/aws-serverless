@@ -1,10 +1,6 @@
 # FaultLine — Serverless Error Tracking & Smart Alerting
 
 > **Built for the AWS Builder Center Weekend Challenge: *No Pipeline, No Problem***
->
-> A lightweight, scale-to-zero error tracking and deduplicated alerting platform built entirely on managed serverless AWS services in **Go (`arm64` Graviton2)**.
-> **No servers to babysit. No CI/CD pipelines to maintain. $0.00 at rest.**
-
 ---
 
 ##  The Problem & What FaultLine Does About It
@@ -245,11 +241,11 @@ Empties the S3 buckets and deletes the entire CloudFormation stack in one comman
 
 ## Scale-to-Zero Cost Breakdown
 
-| Service | Pricing Model | Cost When Idle | AWS Free Tier Coverage |
-|---|---|---|---|
-| **AWS Lambda** (`arm64`) | Per invocation / ms | **$0.00** | 1M requests + 400,000 GB-sec/month (Always Free) |
-| **Amazon DynamoDB** | `PAY_PER_REQUEST` | **$0.00** | 25 GB storage + 25 WCU/RCU (Always Free) |
-| **AWS Step Functions** | Per state transition | **$0.00** | 4,000 state transitions/month (Always Free) |
-| **Amazon SNS** | Per notification | **$0.00** | 1,000 email notifications/month (Always Free) |
-| **Amazon API Gateway** | Per API call | **$0.00** | 1M REST calls/month (12 months free) |
-| **Amazon S3** | Per GB stored | **$0.00** | 5 GB storage (12 months free) + 30-day auto-expiry |
+| Service | Pricing Model | AWS Free Tier Coverage |
+|---|---|---|
+| **AWS Lambda** (`arm64`) | Per invocation / ms | 1M requests + 400,000 GB-sec/month (Always Free) |
+| **Amazon DynamoDB** | `PAY_PER_REQUEST` | 25 GB storage + 25 WCU/RCU (Always Free) |
+| **AWS Step Functions** | Per state transition | 4,000 state transitions/month (Always Free) |
+| **Amazon SNS** | Per notification | 1,000 email notifications/month (Always Free) |
+| **Amazon API Gateway** | Per API call | 1M REST calls/month (12 months free) |
+| **Amazon S3** | Per GB stored | 5 GB storage (12 months free) + 30-day auto-expiry |
